@@ -548,7 +548,7 @@ STDAPI DllUnregisterServer(void)
 }
 
 
-/* Support function to convert ASCII string into BSTR (used in _bstr_t) */
+#if !defined(__MINGW64_VERSION_MAJOR) || __MINGW64_VERSION_MAJOR < 14 /* Support function to convert ASCII string into BSTR (used in _bstr_t) */
 namespace _com_util
 {
     BSTR WINAPI ConvertStringToBSTR(const char *ascii) {
@@ -566,6 +566,7 @@ namespace _com_util
         return bstr;
     }
 }
+#endif /* __MINGW64_VERSION_MAJOR < 14 */
 
 /* Stop QGA VSS provider service using Winsvc API  */
 STDAPI StopService(void)
