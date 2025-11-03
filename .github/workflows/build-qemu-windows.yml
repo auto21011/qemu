@@ -38,12 +38,15 @@ jobs:
       - name: build
         run: |
           cd build
-          ninja
+          ninja -j8
+      - name: build
+        run: |
+          cd build
           make install
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           namr: artifact
-          path: /opt/qemu_custom
+          path: d:/a/_temp/msys64/opt/qemu_custom
       - run: echo "This job's status is ${{ job.status }}."
 
