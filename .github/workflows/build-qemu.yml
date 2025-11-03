@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
 jobs:
   Build_Qemu_AARCH64:
-    runs-on: archlinux-latest
+    runs-on: ubuntu-latest
+    container: archlinux:multilib-devel
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -12,11 +13,13 @@ jobs:
         run: |
           pacman -Sy
           pacman -Sy --noconfirm base base-devel
-          pacman -Sy --noconfirm alsa-lib brltty bzip2 cairo curl cdrtools dtc fuse3 gcc-libs gdk-pixbuf2 git glib2 glusterfs gnutls gtk3 jack libaio libbpf libcacard libcap-ng libepoxy libiscsi libnfs libpng libpulse libsasl libseccomp libslirp libssh liburing libusb libx11 libxkbcommon lzo mesa meson ncurses ndctl numactl pam pixman python python-sphinx python-sphinx_rtd_theme sdl2 sdl2_image seabios snappy spice-protocol spice systemd usbredir vde2 virglrenderer vte3 libvte-2.91.so xfsprogs zlib zstd
+          pacman -Sy --noconfirm ninja alsa-lib brltty bzip2 cairo curl cdrtools dtc fuse3 gcc-libs gdk-pixbuf2 git glib2 glusterfs gnutls gtk3 jack libaio libbpf libcacard libcap-ng libepoxy libiscsi libnfs libpng libpulse libsasl libseccomp libslirp libssh liburing libusb libx11 libxkbcommon lzo mesa meson ncurses ndctl numactl pam pixman python python-sphinx python-sphinx_rtd_theme sdl2 sdl2_image seabios snappy spice-protocol spice systemd usbredir vde2 virglrenderer vte3 libvte-2.91.so xfsprogs zlib zstd
       - name: configure
         run: |
           sudo mkdir /opt/qemu_custom -p
-          ./configure \
+          sudo mkdir build
+          cd build
+          ../configure \
           --prefix=/opt/qemu_custom \
           --target-list="aarch64-softmmu" \
           --smbd=/usr/bin/smbd \
@@ -25,7 +28,8 @@ jobs:
           --disable-werror
       - name: build qemu
         run: |
-          ninja
+          cd build
+          ninja -j8
           make install
       - name: Upload artifact
         uses: actions/upload-artifact@v4
