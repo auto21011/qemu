@@ -1,0 +1,35 @@
+name: Build_QEMU_CI_CD
+run-name: ${{ github.actor }} is building QEMU_CI_CD for linux using GitHub Actions 🚀
+on:
+  workflow_dispatch:
+jobs:
+  Build_Qemu_AARCH64:
+    runs-on: archlinux-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Install build deps
+        run: |
+          pacman -Sy
+          pacman -Sy --noconfirm base base-devel
+          pacman -Sy --noconfirm alsa-lib brltty bzip2 cairo curl cdrtools dtc fuse3 gcc-libs gdk-pixbuf2 git glib2 glusterfs gnutls gtk3 jack libaio libbpf libcacard libcap-ng libepoxy libiscsi libnfs libpng libpulse libsasl libseccomp libslirp libssh liburing libusb libx11 libxkbcommon lzo mesa meson ncurses ndctl numactl pam pixman python python-sphinx python-sphinx_rtd_theme sdl2 sdl2_image seabios snappy spice-protocol spice systemd usbredir vde2 virglrenderer vte3 libvte-2.91.so xfsprogs zlib zstd
+      - name: configure
+        run: |
+          sudo mkdir /opt/qemu_custom -p
+          ./configure \
+          --prefix=/opt/qemu_custom \
+          --target-list="aarch64-softmmu" \
+          --smbd=/usr/bin/smbd \
+          --enable-modules \
+          --enable-sdl \
+          --disable-werror
+      - name: build qemu
+        run: |
+          ninja
+          make install
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output  # Artifact 名称
+          path: /opt/qemu_custom
+      - run: echo "🍏 This job's status is ${{ job.status }}."
