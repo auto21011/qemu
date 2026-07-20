@@ -321,6 +321,9 @@ aspeed_xdma_write(uint64_t offset, uint64_t data) "XDMA write: offset 0x%" PRIx6
 # aspeed_pwm.c
 aspeed_pwm_read(uint64_t offset, uint64_t data) "read: offset 0x%" PRIx64 " data 0x%" PRIx64
 aspeed_pwm_write(uint64_t offset, uint64_t data) "write: offset 0x%" PRIx64 " data 0x%" PRIx64
+aspeed_pwm_duty_update(int ch, uint32_t old_permille, uint32_t new_permille) "ch=%d duty %u -> %u permille"
+aspeed_pwm_tach_update(int ch, uint32_t effective_rpm, uint32_t raw) "ch=%d effective_rpm=%u raw=%u"
+aspeed_pwm_set_target_rpm(int ch, uint32_t target_rpm) "ch=%d target_rpm=%u"
 
 # aspeed_sdmc.c
 aspeed_sdmc_write(uint64_t reg, uint64_t data) "reg @0x%" PRIx64 " data: 0x%" PRIx64

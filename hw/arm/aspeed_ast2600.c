@@ -201,6 +201,8 @@ static void aspeed_soc_ast2600_init(Object *obj)
 
     object_initialize_child(obj, "peci", &s->peci, TYPE_ASPEED_PECI);
 
+    object_initialize_child(obj, "pwm", &s->pwm, TYPE_ASPEED_PWM);
+
     snprintf(typename, sizeof(typename), "aspeed.fmc-%s", socname);
     object_initialize_child(obj, "fmc", &s->fmc, typename);
 
@@ -521,6 +523,15 @@ static void aspeed_soc_ast2600_realize(DeviceState *dev, Error **errp)
                     sc->memmap[ASPEED_DEV_PECI]);
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->peci), 0,
                        aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_PECI));
+
+    /* PWM/Tachometer */
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->pwm), errp)) {
+        return;
+    }
+    aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(&s->pwm), 0,
+                    sc->memmap[ASPEED_DEV_PWM]);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->pwm), 0,
+                       aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_PWM));
 
     /* PCIe Root Complex (RC) */
     if (!aspeed_soc_ast2600_pcie_realize(dev, errp)) {

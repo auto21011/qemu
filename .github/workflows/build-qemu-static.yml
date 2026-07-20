@@ -1,0 +1,114 @@
+name: Build_Static_QEMU_AARCH64
+run-name: ${{ github.actor }} is building static qemu-system-aarch64 🚀
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/build-qemu-static.yml'
+      - 'hw/misc/aspeed_pwm.c'
+      - 'hw/misc/aspeed_pwm.h'
+      - 'hw/arm/aspeed_ast2600.c'
+      - 'hw/misc/trace-events'
+  pull_request:
+    paths:
+      - '.github/workflows/build-qemu-static.yml'
+      - 'hw/misc/aspeed_pwm.c'
+      - 'hw/misc/aspeed_pwm.h'
+      - 'hw/arm/aspeed_ast2600.c'
+      - 'hw/misc/trace-events'
+
+jobs:
+  Build_Static_QEMU_AARCH64:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies (static libs)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential ninja-build python3 python3-venv pkg-config \
+            libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev \
+            libaio-dev liburing-dev libslirp-dev libseccomp-dev \
+            libcap-ng-dev libbz2-dev libzstd-dev libcurl4-openssl-dev \
+            libpng-dev
+
+      - name: Configure (static aarch64-softmmu)
+        run: |
+          mkdir -p build
+          cd build
+          ../configure \
+            --prefix=/opt/qemu-static \
+            --static \
+            --disable-werror \
+            --without-default-features \
+            --disable-docs \
+            --disable-install-blobs \
+            --target-list="aarch64-softmmu" \
+            --enable-linux-aio \
+            --enable-linux-io-uring \
+            --enable-slirp \
+            --enable-seccomp \
+            --enable-cap-ng \
+            --enable-bzip2 \
+            --enable-zstd \
+            --enable-curl \
+            --enable-png
+
+      - name: Build qemu-system-aarch64
+        run: |
+          cd build
+          ninja -j"$(nproc)" qemu-system-aarch64
+
+      - name: Verify static linking
+        run: |
+          cd build
+          echo "=== binary info ==="
+          ls -la qemu-system-aarch64
+          echo "=== ldd (should say 'not a dynamic executable' or 'statically linked') ==="
+          ldd qemu-system-aarch64 || true
+
+      - name: Smoke test
+        run: |
+          cd build
+          ./qemu-system-aarch64 --version
+          ./qemu-system-aarch64 -M help | grep -E "ast2600-evb|ast2500-evb" | head -5
+
+      - name: Stage install tree
+        run: |
+          cd build
+          make install
+          # Repackage bin/ + minimum share/ into a single portable bundle
+          mkdir -p /opt/qemu-static-bundle
+          cp -a /opt/qemu-static/bin /opt/qemu-static-bundle/
+          # Firmware / keymaps are needed for -M machines with default devices
+          mkdir -p /opt/qemu-static-bundle/share
+          cp -a /opt/qemu-static/share/qemu /opt/qemu-static-bundle/share/
+          cp -a /opt/qemu-static/share/keymaps /opt/qemu-static-bundle/share/ 2>/dev/null || true
+          # Sanity: the main binary must be in PATH-equivalent
+          file /opt/qemu-static-bundle/bin/qemu-system-aarch64
+          ldd /opt/qemu-static-bundle/bin/qemu-system-aarch64 || true
+
+      - name: Tar the bundle
+        run: |
+          cd /opt
+          tar -caf qemu-static-aarch64.tar.xz qemu-static-bundle
+          ls -la /opt/qemu-static-aarch64.tar.xz
+
+      - name: Upload qemu-system-aarch64 (single binary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-system-aarch64-static
+          path: /opt/qemu-static-bundle/bin/qemu-system-aarch64
+          if-no-files-found: error
+
+      - name: Upload portable bundle (binary + firmware + keymaps)
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-static-aarch64-bundle
+          path: /opt/qemu-static-aarch64.tar.xz
+          if-no-files-found: error
+
+      - run: echo "🍏 This job's status is ${{ job.status }}."
