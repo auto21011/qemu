@@ -94,10 +94,11 @@ static uint32_t aspeed_pwm_calc_duty_permille(AspeedPWMChannel *c)
 }
 
 /*
- * Inverse of the Linux RPM formula:
- *   rpm = (clk * 60) / (2 * raw * tach_div * pulse_pr)
- * -> raw = (clk * 60) / (2 * effective_rpm * tach_div * pulse_pr)
+ * Inverse of the Linux RPM formula (aspeed_tach_val_to_rpm):
+ *   rpm = (clk * 60) / (raw * tach_div * pulse_pr)
+ * -> raw = (clk * 60) / (effective_rpm * tach_div * pulse_pr)
  *
+ * Note: the driver does NOT have a factor of 2 in the denominator.
  * tach_div = 4^n where n = CLK_DIV_T (0..15).
  * pulse_pr defaults to 2 (matching the Linux driver).
  */
@@ -122,8 +123,8 @@ static uint32_t aspeed_pwm_calc_tach_raw(AspeedPWMState *s,
     }
 
     raw = (uint64_t)s->clock_freq * 60;
-    raw /= 2ull * (uint64_t)effective_rpm * tach_div *
-          (uint64_t)s->pulse_per_revolution;
+    raw /= (uint64_t)effective_rpm * tach_div *
+           (uint64_t)s->pulse_per_revolution;
 
     if (raw > ASPEED_TACH_STS_VALUE_MASK) {
         raw = ASPEED_TACH_STS_VALUE_MASK;

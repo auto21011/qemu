@@ -313,6 +313,93 @@ static uint32_t aspeed_2700_scuio_get_apb_freq(AspeedSCUState *s)
         / asc->apb_divider;
 }
 
+uint32_t aspeed_scu_get_ahb_freq(AspeedSCUState *s)
+{
+    return ASPEED_SCU_GET_CLASS(s)->get_ahb(s);
+}
+
+static uint32_t aspeed_2400_scu_get_ahb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[HPLL_PARAM]);
+    uint32_t strap = s->regs[HW_STRAP1];
+    uint32_t cpu_ahb_ratio = ((strap >> 10) & 0x3) + 1;
+
+    return hpll / cpu_ahb_ratio;
+}
+
+static uint32_t aspeed_2500_scu_get_ahb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[HPLL_PARAM]);
+    uint32_t strap = s->regs[HW_STRAP1];
+    uint32_t axi_ahb_ratio = (strap >> 9) & 0x7;
+
+    return axi_ahb_ratio ? hpll / axi_ahb_ratio : hpll;
+}
+
+/*
+ * AHB = HPLL / (axi_div * ahb_div).  Algorithm from Linux clk-ast2600.c.
+ */
+static uint32_t aspeed_2600_scu_get_ahb_freq(AspeedSCUState *s)
+{
+    static const uint8_t ahb200_tbl[] = { 3, 4, 3, 4, 2, 2, 2, 2 };
+    static const uint8_t ahb_div0_tbl[] = { 3, 2, 3, 4 };
+    static const uint8_t ahb_div1_tbl[] = { 3, 4, 6, 8 };
+
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2600_HPLL_PARAM]);
+    uint32_t strap = s->regs[AST2600_HW_STRAP1];
+    uint32_t axi_div, ahb_div, divbits;
+
+    if (strap & BIT(16)) {
+        axi_div = 1;
+    } else {
+        axi_div = 2;
+    }
+
+    divbits = (strap >> 11) & 0x3;
+
+    if (divbits == 0) {
+        ahb_div = ahb200_tbl[(strap >> 8) & 0x7];
+        if (strap & BIT(16)) {
+            ahb_div *= 2;
+        }
+    } else {
+        if (strap & BIT(16)) {
+            ahb_div = ahb_div1_tbl[divbits];
+        } else {
+            ahb_div = ahb_div0_tbl[divbits];
+        }
+    }
+
+    return hpll / (axi_div * ahb_div);
+}
+
+static uint32_t aspeed_2700_scu_get_ahb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2700_SCU_HPLL_PARAM]);
+
+    return hpll / 4;
+}
+
+static uint32_t aspeed_2700_scuio_get_ahb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2700_SCUIO_HPLL_PARAM]);
+
+    return hpll / 4;
+}
+
+static uint32_t aspeed_1030_scu_get_ahb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2600_HPLL_PARAM]);
+
+    return hpll / 4;
+}
+
 static uint64_t aspeed_scu_read(void *opaque, hwaddr offset, unsigned size)
 {
     AspeedSCUState *s = ASPEED_SCU(opaque);
@@ -638,6 +725,7 @@ static void aspeed_2400_scu_class_init(ObjectClass *klass, const void *data)
     asc->resets = ast2400_a0_resets;
     asc->calc_hpll = aspeed_2400_scu_calc_hpll;
     asc->get_apb = aspeed_2400_scu_get_apb_freq;
+    asc->get_ahb = aspeed_2400_scu_get_ahb_freq;
     asc->apb_divider = 2;
     asc->nr_regs = ASPEED_SCU_NR_REGS;
     asc->clkin_25Mhz = false;
@@ -653,6 +741,7 @@ static void aspeed_2500_scu_class_init(ObjectClass *klass, const void *data)
     asc->resets = ast2500_a1_resets;
     asc->calc_hpll = aspeed_2500_scu_calc_hpll;
     asc->get_apb = aspeed_2400_scu_get_apb_freq;
+    asc->get_ahb = aspeed_2500_scu_get_ahb_freq;
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_SCU_NR_REGS;
     asc->clkin_25Mhz = false;
@@ -835,6 +924,7 @@ static void aspeed_2600_scu_class_init(ObjectClass *klass, const void *data)
     asc->resets = ast2600_a3_resets;
     asc->calc_hpll = aspeed_2600_scu_calc_hpll;
     asc->get_apb = aspeed_2600_scu_get_apb_freq;
+    asc->get_ahb = aspeed_2600_scu_get_ahb_freq;
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_AST2600_SCU_NR_REGS;
     asc->clkin_25Mhz = true;
@@ -941,6 +1031,7 @@ static void aspeed_2700_scu_class_init(ObjectClass *klass, const void *data)
     asc->resets = ast2700_a0_resets;
     asc->calc_hpll = aspeed_2600_scu_calc_hpll;
     asc->get_apb = aspeed_2700_scu_get_apb_freq;
+    asc->get_ahb = aspeed_2700_scu_get_ahb_freq;
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_AST2700_SCU_NR_REGS;
     asc->clkin_25Mhz = true;
@@ -1074,6 +1165,7 @@ static void aspeed_2700_scuio_class_init(ObjectClass *klass, const void *data)
     asc->resets = ast2700_a0_resets_io;
     asc->calc_hpll = aspeed_2600_scu_calc_hpll;
     asc->get_apb = aspeed_2700_scuio_get_apb_freq;
+    asc->get_ahb = aspeed_2700_scuio_get_ahb_freq;
     asc->apb_divider = 2;
     asc->nr_regs = ASPEED_AST2700_SCU_NR_REGS;
     asc->clkin_25Mhz = true;
@@ -1119,6 +1211,7 @@ static void aspeed_1030_scu_class_init(ObjectClass *klass, const void *data)
     asc->resets = ast1030_a1_resets;
     asc->calc_hpll = aspeed_2600_scu_calc_hpll;
     asc->get_apb = aspeed_1030_scu_get_apb_freq;
+    asc->get_ahb = aspeed_1030_scu_get_ahb_freq;
     asc->apb_divider = 2;
     asc->nr_regs = ASPEED_AST2600_SCU_NR_REGS;
     asc->clkin_25Mhz = true;

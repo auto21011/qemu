@@ -102,8 +102,9 @@ typedef struct AspeedPWMState {
 
     /*
      * Reference clock driving the PWM/tach counter (Hz). Wires together the
-     * formula in the Linux driver; defaults to 24 MHz (APB) and is overridable
-     * via the "clock-freq" qdev property so boards can reflect SCU muxing.
+     * formula in the Linux driver; defaults to the SoC AHB bus clock
+     * (set by the SoC realize code via aspeed_scu_get_ahb_freq()) and is
+     * overridable via the "clock-freq" qdev property for board-level tuning.
      */
     uint32_t clock_freq;
 

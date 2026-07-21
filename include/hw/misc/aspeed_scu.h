@@ -61,6 +61,7 @@ struct AspeedSCUClass {
     const uint32_t *resets;
     uint32_t (*calc_hpll)(AspeedSCUState *s, uint32_t hpll_reg);
     uint32_t (*get_apb)(AspeedSCUState *s);
+    uint32_t (*get_ahb)(AspeedSCUState *s);
     uint32_t apb_divider;
     uint32_t nr_regs;
     bool clkin_25Mhz;
@@ -70,6 +71,7 @@ struct AspeedSCUClass {
 #define ASPEED_SCU_PROT_KEY      0x1688A8A8
 
 uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);
+uint32_t aspeed_scu_get_ahb_freq(AspeedSCUState *s);
 
 /*
  * Extracted from Aspeed SDK v00.03.21. Fixes and extra definitions

@@ -525,6 +525,8 @@ static void aspeed_soc_ast2600_realize(DeviceState *dev, Error **errp)
                        aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_PECI));
 
     /* PWM/Tachometer */
+    object_property_set_int(OBJECT(&s->pwm), "clock-freq",
+                            aspeed_scu_get_ahb_freq(&s->scu), &error_abort);
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->pwm), errp)) {
         return;
     }
