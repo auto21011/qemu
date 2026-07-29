@@ -21,7 +21,33 @@ import os
 import socket
 import struct
 import sys
+import importlib
 from abc import ABC, abstractmethod
+
+
+def _own_dir() -> str:
+    """Absolute dir containing this script, regardless of the caller's cwd."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+# Running `python3 subdir/i2c_custom_proxy.py` from the parent dir leaves
+# subdir OFF sys.path in Python 3, so the `import tmp117_model` in main()
+# would raise ModuleNotFoundError. Add this script's own dir back so any
+# device model placed alongside it imports cleanly regardless of cwd.
+_HERE = _own_dir()
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+# Device models do `from i2c_custom_proxy import register_device`, which
+# Python resolves through sys.modules under the name "i2c_custom_proxy".
+# When this file is run as `python3 i2c_custom_proxy.py`, Python loads it
+# under "__main__" — NOT "i2c_custom_proxy" — so the model's `from ... import`
+# would load this file a SECOND time, get a DIFFERENT module object, and
+# register_device() would write into its DEVICE_REGISTRY while main() reads
+# from __main__'s own copy. Aliasing the running module under the canonical
+# name makes both sides see the same registry dict.
+if __name__ == "__main__" and "i2c_custom_proxy" not in sys.modules:
+    sys.modules["i2c_custom_proxy"] = sys.modules["__main__"]
 
 # Wire protocol constants — must mirror include/hw/sensor/i2c-custom.h
 OP_SEND = 1
@@ -186,10 +212,25 @@ def main(argv: list[str]) -> int:
         )
         return 2
     path, name = argv[1], argv[2]
-    # Import the example model so it self-registers; if a user later adds
-    # their own model module they can import it from here or implement
-    # their own entry point wrapper.
-    import tmp117_model  # noqa: F401  (registers "TMP117")
+    # Auto-import every sibling *_model.py module so its register_device()
+    # side-effect runs and the device becomes resolvable by <device_name>.
+    # Each model module self-registers at import time; the bound name is
+    # not used, hence the `# noqa: F401` below. Failure to import any one
+    # model does not abort the others, but it is surfaced so the user sees
+    # the underlying exception rather than a bare "(none)" registry.
+    import glob as _glob
+    for _m in sorted(_glob.glob(os.path.join(_HERE, "*_model.py"))):
+        _modname = os.path.splitext(os.path.basename(_m))[0]
+        if _modname in sys.modules:
+            continue
+        try:
+            importlib.import_module(_modname)
+        except Exception as _e:
+            sys.stderr.write(
+                f"failed to import bundled model {_modname} "
+                f"({type(_e).__name__}: {_e}); registered so far: "
+                f"{' '.join(DEVICE_REGISTRY) or '(none)'}\n"
+            )
 
     if name not in DEVICE_REGISTRY:
         sys.stderr.write(
