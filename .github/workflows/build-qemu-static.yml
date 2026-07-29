@@ -44,8 +44,7 @@ jobs:
             build-essential ninja-build python3 python3-venv pkg-config \
             libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev \
             libaio-dev liburing-dev libslirp-dev libseccomp-dev \
-            libcap-ng-dev libbz2-dev libzstd-dev libcurl4-openssl-dev \
-            libpng-dev
+            libcap-ng-dev libpng-dev
 
       - name: Configure (static aarch64-softmmu)
         run: |
@@ -64,9 +63,6 @@ jobs:
             --enable-slirp \
             --enable-seccomp \
             --enable-cap-ng \
-            --enable-bzip2 \
-            --enable-zstd \
-            --enable-curl \
             --enable-png
 
       - name: Build qemu-system-aarch64

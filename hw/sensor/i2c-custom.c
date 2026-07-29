@@ -20,6 +20,8 @@
 #include "qapi/error.h"
 #include "hw/i2c/i2c.h"
 #include "hw/sensor/i2c-custom.h"
+#include "hw/core/qdev-properties.h"
+#include "hw/core/qdev-properties-system.h"
 #include "migration/vmstate.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
@@ -374,6 +376,10 @@ static const VMStateDescription i2c_custom_vmstate = {
     }
 };
 
+static const Property i2c_custom_properties[] = {
+    DEFINE_PROP_CHR("chardev", I2CCustomState, chr),
+};
+
 static void i2c_custom_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -385,14 +391,11 @@ static void i2c_custom_class_init(ObjectClass *klass, const void *data)
     /* send_async intentionally unset: we don't support deferred ACK. */
 
     dc->realize = i2c_custom_realize;
-    dc->reset = i2c_custom_reset;
+    device_class_set_legacy_reset(dc, i2c_custom_reset);
     dc->vmsd = &i2c_custom_vmstate;
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+    device_class_set_props(dc, i2c_custom_properties);
 }
-
-static const Property i2c_custom_properties[] = {
-    DEFINE_PROP_CHR("chardev", I2CCustomState, chr),
-};
 
 static void i2c_custom_register_types(void)
 {
