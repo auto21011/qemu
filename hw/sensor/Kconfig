@@ -43,3 +43,8 @@ config ISL_PMBUS_VR
 config MAX31785
     bool
     depends on PMBUS
+
+config I2C_CUSTOM
+    bool
+    depends on I2C
+    default y if I2C_DEVICES

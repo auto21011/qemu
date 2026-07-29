@@ -4,3 +4,8 @@
 tmp105_read(uint8_t dev, uint8_t addr) "device: 0x%02x, addr: 0x%02x"
 tmp105_write(uint8_t dev, uint8_t addr) "device: 0x%02x, addr 0x%02x"
 tmp105_write_shutdown(uint8_t dev) "device: 0x%02x"
+
+# i2c-custom.c
+i2c_custom_event_op(uint8_t op, uint8_t addr) "op: 0x%02x, addr: 0x%02x"
+i2c_custom_send(int len, uint8_t first) "len: %d, first: 0x%02x"
+i2c_custom_recv(int len, uint8_t first) "len: %d, first: 0x%02x"

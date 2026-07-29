@@ -10,6 +10,12 @@ on:
       - 'hw/misc/aspeed_pwm.h'
       - 'hw/arm/aspeed_ast2600.c'
       - 'hw/misc/trace-events'
+      - 'hw/sensor/i2c-custom.c'
+      - 'include/hw/sensor/i2c-custom.h'
+      - 'hw/sensor/Kconfig'
+      - 'hw/sensor/meson.build'
+      - 'hw/sensor/trace-events'
+      - 'tests/qemu/i2c-custom-proxy/**'
   pull_request:
     paths:
       - '.github/workflows/build-qemu-static.yml'
@@ -17,6 +23,12 @@ on:
       - 'hw/misc/aspeed_pwm.h'
       - 'hw/arm/aspeed_ast2600.c'
       - 'hw/misc/trace-events'
+      - 'hw/sensor/i2c-custom.c'
+      - 'include/hw/sensor/i2c-custom.h'
+      - 'hw/sensor/Kconfig'
+      - 'hw/sensor/meson.build'
+      - 'hw/sensor/trace-events'
+      - 'tests/qemu/i2c-custom-proxy/**'
 
 jobs:
   Build_Static_QEMU_AARCH64:
@@ -75,6 +87,12 @@ jobs:
           cd build
           ./qemu-system-aarch64 --version
           ./qemu-system-aarch64 -M help | grep -E "ast2600-evb|ast2500-evb" | head -5
+          # Confirm the new i2c-custom device is registered for this target.
+          ./qemu-system-aarch64 -device help | grep -E "i2c-custom" | head -2
+
+      - name: Python proxy self-test
+        run: |
+          python3 tests/qemu/i2c-custom-proxy/selftest.py
 
       - name: Stage install tree
         run: |
