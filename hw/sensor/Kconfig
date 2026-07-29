@@ -48,3 +48,8 @@ config I2C_CUSTOM
     bool
     depends on I2C
     default y if I2C_DEVICES
+
+config SPI_CUSTOM
+    bool
+    depends on SSI
+    default y

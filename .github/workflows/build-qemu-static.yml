@@ -12,10 +12,13 @@ on:
       - 'hw/misc/trace-events'
       - 'hw/sensor/i2c-custom.c'
       - 'include/hw/sensor/i2c-custom.h'
+      - 'hw/sensor/spi-custom.c'
+      - 'include/hw/sensor/spi-custom.h'
       - 'hw/sensor/Kconfig'
       - 'hw/sensor/meson.build'
       - 'hw/sensor/trace-events'
       - 'tests/qemu/i2c-custom-proxy/**'
+      - 'tests/qemu/spi-custom-proxy/**'
   pull_request:
     paths:
       - '.github/workflows/build-qemu-static.yml'
@@ -25,10 +28,13 @@ on:
       - 'hw/misc/trace-events'
       - 'hw/sensor/i2c-custom.c'
       - 'include/hw/sensor/i2c-custom.h'
+      - 'hw/sensor/spi-custom.c'
+      - 'include/hw/sensor/spi-custom.h'
       - 'hw/sensor/Kconfig'
       - 'hw/sensor/meson.build'
       - 'hw/sensor/trace-events'
       - 'tests/qemu/i2c-custom-proxy/**'
+      - 'tests/qemu/spi-custom-proxy/**'
 
 jobs:
   Build_Static_QEMU_AARCH64:
@@ -83,12 +89,16 @@ jobs:
           cd build
           ./qemu-system-aarch64 --version
           ./qemu-system-aarch64 -M help | grep -E "ast2600-evb|ast2500-evb" | head -5
-          # Confirm the new i2c-custom device is registered for this target.
-          ./qemu-system-aarch64 -device help | grep -E "i2c-custom" | head -2
+          # Confirm the i2c-custom and spi-custom devices are registered.
+          ./qemu-system-aarch64 -device help | grep -E "i2c-custom|spi-custom" | head -4
 
-      - name: Python proxy self-test
+      - name: Python proxy self-test (i2c-custom)
         run: |
           python3 tests/qemu/i2c-custom-proxy/selftest.py
+
+      - name: Python proxy self-test (spi-custom)
+        run: |
+          python3 tests/qemu/spi-custom-proxy/selftest.py
 
       - name: Stage install tree
         run: |
