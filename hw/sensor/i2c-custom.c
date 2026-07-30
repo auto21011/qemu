@@ -245,6 +245,17 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
 
     case I2C_START_RECV: {
         /*
+         * If this is a repeated START (no intervening I2C_FINISH), any
+         * bytes accumulated during the preceding write phase must be
+         * flushed to the backend so the device model sees the register
+         * pointer before we start reading.
+         */
+        if (s->in_send_txn && s->tx_len > 0) {
+            i2c_custom_request(s, I2C_CUSTOM_OP_SEND,
+                               s->tx_buf, s->tx_len,
+                               0, i2c->address, NULL);
+        }
+        /*
          * Pre-fetch the entire master-read into rx_buf so subsequent
          * i2c_custom_recv() calls return bytes synchronously without
          * blocking each call separately.
