@@ -189,11 +189,57 @@ def serve(listener: socket.socket, device: Device) -> None:
 
 
 def make_listener(path: str) -> socket.socket:
+    """Create a listening UNIX socket (proxy is server, QEMU is client).
+
+    Use when QEMU is started with ``server=off`` (or just omit
+    ``server=on``).  The startup sequence is::
+
+        python3 i2c_custom_proxy.py /tmp/i2c.sock LM75   # start first
+        # then start QEMU which connects to /tmp/i2c.sock
+    """
     if os.path.exists(path):
         os.unlink(path)
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(path)
     return s
+
+
+def connect_sock(path: str, device: Device) -> socket.socket:
+    """Connect to an existing listening UNIX socket (proxy is client).
+
+    Use when QEMU is started with ``server=on`` (QEMU listens).  The
+    startup sequence is::
+
+        # start QEMU first (it creates /tmp/i2c.sock and listens)
+        python3 i2c_custom_proxy.py /tmp/i2c.sock LM75 --connect
+    """
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    import time as _time
+    deadline = 15.0
+    start = _time.monotonic()
+    while True:
+        try:
+            s.connect(path)
+            break
+        except (ConnectionRefusedError, FileNotFoundError):
+            if _time.monotonic() - start >= deadline:
+                raise
+            _time.sleep(0.1)
+    sys.stderr.write(
+        f"[i2c-custom-proxy] connected to {path} with "
+        f"device={device.__class__.__name__}\n"
+    )
+    sys.stderr.flush()
+    return s
+
+
+def serve_conn(conn: socket.socket, device: Device) -> None:
+    """Handle requests on a single pre-established connection until EOF."""
+    try:
+        while handle_one_request(conn, device):
+            pass
+    except (ConnectionResetError, BrokenPipeError):
+        pass
 
 
 # Registry populated lazily so importing just this file is harmless.
@@ -204,20 +250,8 @@ def register_device(name: str, cls):
     DEVICE_REGISTRY[name] = cls
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) < 3:
-        sys.stderr.write(
-            f"Usage: {argv[0]} <socket_path> <device_name>\n"
-            f"Registered devices: {' '.join(DEVICE_REGISTRY) or '(none)'}\n"
-        )
-        return 2
-    path, name = argv[1], argv[2]
-    # Auto-import every sibling *_model.py module so its register_device()
-    # side-effect runs and the device becomes resolvable by <device_name>.
-    # Each model module self-registers at import time; the bound name is
-    # not used, hence the `# noqa: F401` below. Failure to import any one
-    # model does not abort the others, but it is surfaced so the user sees
-    # the underlying exception rather than a bare "(none)" registry.
+def _auto_import_models() -> None:
+    """Import every sibling *_model.py so its register_device() fires."""
     import glob as _glob
     for _m in sorted(_glob.glob(os.path.join(_HERE, "*_model.py"))):
         _modname = os.path.splitext(os.path.basename(_m))[0]
@@ -232,6 +266,24 @@ def main(argv: list[str]) -> int:
                 f"{' '.join(DEVICE_REGISTRY) or '(none)'}\n"
             )
 
+
+def main(argv: list[str]) -> int:
+    args = list(argv)
+    connect_mode = "--connect" in args
+    if connect_mode:
+        args.remove("--connect")
+
+    if len(args) < 3:
+        sys.stderr.write(
+            f"Usage: {args[0]} <socket_path> <device_name> [--connect]\n"
+            f"  --connect  Connect to QEMU server socket (QEMU server=on)\n"
+            f"  (default)  Create listener socket (QEMU server=off)\n"
+            f"Registered devices: {' '.join(DEVICE_REGISTRY) or '(none)'}\n"
+        )
+        return 2
+    path, name = args[1], args[2]
+    _auto_import_models()
+
     if name not in DEVICE_REGISTRY:
         sys.stderr.write(
             f"Unknown device '{name}'. Registered: "
@@ -239,17 +291,27 @@ def main(argv: list[str]) -> int:
         )
         return 2
     device = DEVICE_REGISTRY[name]()
-    listener = make_listener(path)
-    try:
-        serve(listener, device)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        listener.close()
+
+    if connect_mode:
+        conn = connect_sock(path, device)
         try:
-            os.unlink(path)
-        except OSError:
+            serve_conn(conn, device)
+        except KeyboardInterrupt:
             pass
+        finally:
+            conn.close()
+    else:
+        listener = make_listener(path)
+        try:
+            serve(listener, device)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            listener.close()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
     return 0
 
 

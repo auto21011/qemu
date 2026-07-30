@@ -172,12 +172,43 @@ def handle_one_request(conn: socket.socket, device: Device) -> bool:
 
 
 def make_listener(path: str) -> socket.socket:
+    """Create a listening UNIX socket (proxy is server, QEMU is client).
+
+    Use when QEMU is started with ``server=off``.  Start the proxy first,
+    then start QEMU which connects to the socket.
+    """
     try:
         os.unlink(path)
     except FileNotFoundError:
         pass
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(path)
+    return s
+
+
+def connect_sock(path: str, device: Device) -> socket.socket:
+    """Connect to an existing listening UNIX socket (proxy is client).
+
+    Use when QEMU is started with ``server=on`` (QEMU listens).  Start
+    QEMU first, then run the proxy with ``--connect``.
+    """
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    import time as _time
+    deadline = 15.0
+    start = _time.monotonic()
+    while True:
+        try:
+            s.connect(path)
+            break
+        except (ConnectionRefusedError, FileNotFoundError):
+            if _time.monotonic() - start >= deadline:
+                raise
+            _time.sleep(0.1)
+    sys.stderr.write(
+        f"[spi-custom-proxy] connected to {path} with "
+        f"device={device.__class__.__name__}\n"
+    )
+    sys.stderr.flush()
     return s
 
 
@@ -200,6 +231,14 @@ def serve(listener: socket.socket, device: Device) -> None:
             conn.close()
 
 
+def serve_conn(conn: socket.socket, device: Device) -> None:
+    try:
+        while handle_one_request(conn, device):
+            pass
+    except (ConnectionResetError, BrokenPipeError):
+        pass
+
+
 # Registry populated lazily.
 DEVICE_REGISTRY = {}
 
@@ -208,15 +247,7 @@ def register_device(name: str, cls):
     DEVICE_REGISTRY[name] = cls
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) < 3:
-        sys.stderr.write(
-            f"Usage: {argv[0]} <socket_path> <device_name>\n"
-            f"Registered devices: {' '.join(DEVICE_REGISTRY) or '(none)'}\n"
-        )
-        return 2
-    path, name = argv[1], argv[2]
-
+def _auto_import_models() -> None:
     import glob as _glob
     for _m in sorted(_glob.glob(os.path.join(_HERE, "*_model.py"))):
         _modname = os.path.splitext(os.path.basename(_m))[0]
@@ -231,6 +262,24 @@ def main(argv: list[str]) -> int:
                 f"{' '.join(DEVICE_REGISTRY) or '(none)'}\n"
             )
 
+
+def main(argv: list[str]) -> int:
+    args = list(argv)
+    connect_mode = "--connect" in args
+    if connect_mode:
+        args.remove("--connect")
+
+    if len(args) < 3:
+        sys.stderr.write(
+            f"Usage: {args[0]} <socket_path> <device_name> [--connect]\n"
+            f"  --connect  Connect to QEMU server socket (QEMU server=on)\n"
+            f"  (default)  Create listener socket (QEMU server=off)\n"
+            f"Registered devices: {' '.join(DEVICE_REGISTRY) or '(none)'}\n"
+        )
+        return 2
+    path, name = args[1], args[2]
+    _auto_import_models()
+
     if name not in DEVICE_REGISTRY:
         sys.stderr.write(
             f"Unknown device '{name}'. Registered: "
@@ -238,17 +287,27 @@ def main(argv: list[str]) -> int:
         )
         return 2
     device = DEVICE_REGISTRY[name]()
-    listener = make_listener(path)
-    try:
-        serve(listener, device)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        listener.close()
+
+    if connect_mode:
+        conn = connect_sock(path, device)
         try:
-            os.unlink(path)
-        except OSError:
+            serve_conn(conn, device)
+        except KeyboardInterrupt:
             pass
+        finally:
+            conn.close()
+    else:
+        listener = make_listener(path)
+        try:
+            serve(listener, device)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            listener.close()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
     return 0
 
 
