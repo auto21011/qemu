@@ -25,6 +25,15 @@ import importlib
 from abc import ABC, abstractmethod
 
 
+_TRACE = os.environ.get("VIRTBOARD_I2C_TRACE", "") == "1"
+
+
+def _trace(msg: str) -> None:
+    if _TRACE:
+        sys.stderr.write(f"[trace] {msg}\n")
+        sys.stderr.flush()
+
+
 def _own_dir() -> str:
     """Absolute dir containing this script, regardless of the caller's cwd."""
     return os.path.dirname(os.path.abspath(__file__))
@@ -132,16 +141,13 @@ def handle_one_request(conn: socket.socket, device: Device) -> bool:
         return True
 
     if opcode == OP_SEND:
+        _trace(f"SEND addr=0x{address:02x} tx={payload.hex()}")
         try:
             device.send(address, payload)
         except Exception as e:
             sys.stderr.write(f"[i2c-custom-proxy] device.send raised: {e}\n")
             reply_nak(conn)
             return True
-        # We deliberately do NOT pre-stage any rx for follow-up RECVs
-        # here; recv() is called lazily by RECV. Devices that want a
-        # register-write to side-effect a staged read should store the
-        # pending reply in self.
         reply(conn, b"")
         return True
 
@@ -161,6 +167,7 @@ def handle_one_request(conn: socket.socket, device: Device) -> bool:
             )
             reply_nak(conn)
             return True
+        _trace(f"RECV addr=0x{address:02x} max={rx_len_max} -> {bytes(rx).hex()}")
         reply(conn, bytes(rx))
         return True
 
