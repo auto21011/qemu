@@ -134,8 +134,14 @@ def main() -> int:
             check("PING", c.ping() == b"")
 
             # ---- pmbus_init_common ----
+            # CAPABILITY: bit 7 (PB_CAPABILITY_ERROR_CHECK / PEC) must be
+            # clear.  If set, pmbus_core enables I2C_CLIENT_PEC and every
+            # subsequent read fails CRC, surfacing as
+            # "PMBus status register not found".
             r = c.read_cmd(0x19, 1)       # CAPABILITY
-            check("CAPABILITY = 0xB0", r == bytes([0xB0]),
+            check("CAPABILITY PEC bit clear", r is not None and not (r[0] & 0x80),
+                  f"got {r.hex() if r else 'NAK'}")
+            check("CAPABILITY = 0x30", r == bytes([0x30]),
                   f"got {r.hex() if r else 'NAK'}")
 
             r = c.read_cmd(0x79, 2)       # STATUS_WORD

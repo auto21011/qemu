@@ -102,7 +102,12 @@ class ISL69260Model(Device):
         d[OPERATION] = bytes([0x40])
         d[ON_OFF_CONFIG] = bytes([0x1A])
         d[WRITE_PROTECT] = bytes([0x00])
-        d[CAPABILITY] = bytes([0xB0])
+        # CAPABILITY: we clear the PEC support bit (BIT7).  The real
+        # ISL69260 advertises PEC, but this proxy has no PEC/CRC layer;
+        # if we set bit 7 the Linux pmbus core (pmbus_core.c) enables
+        # I2C_CLIENT_PEC and every read then fails a CRC check, which
+        # surfaces as "PMBus status register not found".
+        d[CAPABILITY] = bytes([0x30])
         d[VOUT_MODE] = bytes([0x40])          # direct mode
         d[STATUS_BYTE] = bytes([0x00])
         d[STATUS_WORD] = bytes([0x00, 0x00])
