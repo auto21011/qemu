@@ -571,7 +571,8 @@ static void aspeed_i2c_bus_handle_cmd(AspeedI2CBus *bus, uint64_t value)
             }
         } else if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_BUFF_EN)) {
             uint32_t reg_pool_ctrl = aspeed_i2c_bus_pool_ctrl_offset(bus);
-            if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_pool_ctrl,
+            if (!aspeed_i2c_bus_pkt_mode_en(bus) &&
+                SHARED_ARRAY_FIELD_EX32(bus->regs, reg_pool_ctrl,
                                         TX_COUNT) == 0) {
                 SHARED_ARRAY_FIELD_DP32(bus->regs, reg_cmd, M_TX_CMD, 0);
             }
