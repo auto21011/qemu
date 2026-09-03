@@ -256,6 +256,7 @@ struct AspeedI2CBus {
     uint32_t pending_intr_sts;
     uint8_t pool[ASPEED_I2C_BUS_POOL_SIZE];
     uint64_t dma_dram_offset;
+    bool buf_addr_consumed;
 };
 
 struct AspeedI2CState {

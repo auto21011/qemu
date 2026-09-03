@@ -308,11 +308,13 @@ static int aspeed_i2c_bus_send(AspeedI2CBus *bus)
                                                 TX_COUNT) + 1;
 
     if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_BUFF_EN)) {
-        for (i = 1; i < pool_tx_count; i++) {
+        int start = bus->buf_addr_consumed ? 1 : 0;
+        bus->buf_addr_consumed = false;
+        for (i = start; i < pool_tx_count; i++) {
             uint8_t *pool_base = aic->bus_pool_base(bus);
 
-            trace_aspeed_i2c_bus_send("BUF", i, pool_tx_count - 1,
-                                      pool_base[i]);
+            trace_aspeed_i2c_bus_send("BUF", i - start + 1,
+                                      pool_tx_count - start, pool_base[i]);
             ret = i2c_send(bus->bus, pool_base[i]);
             if (ret) {
                 break;
@@ -453,6 +455,7 @@ static uint8_t aspeed_i2c_get_addr(AspeedI2CBus *bus)
     if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_BUFF_EN)) {
         uint8_t *pool_base = aic->bus_pool_base(bus);
 
+        bus->buf_addr_consumed = true;
         return pool_base[0];
     } else if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_DMA_EN)) {
         uint8_t data;
@@ -566,7 +569,13 @@ static void aspeed_i2c_bus_handle_cmd(AspeedI2CBus *bus, uint64_t value)
             if (bus->regs[reg_dma_len] == 0) {
                 SHARED_ARRAY_FIELD_DP32(bus->regs, reg_cmd, M_TX_CMD, 0);
             }
-        } else if (!SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_BUFF_EN)) {
+        } else if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_BUFF_EN)) {
+            uint32_t reg_pool_ctrl = aspeed_i2c_bus_pool_ctrl_offset(bus);
+            if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_pool_ctrl,
+                                        TX_COUNT) == 0) {
+                SHARED_ARRAY_FIELD_DP32(bus->regs, reg_cmd, M_TX_CMD, 0);
+            }
+        } else {
             SHARED_ARRAY_FIELD_DP32(bus->regs, reg_cmd, M_TX_CMD, 0);
         }
 
@@ -1496,6 +1505,7 @@ static void aspeed_i2c_bus_reset_hold(Object *obj, ResetType type)
 
     memset(s->regs, 0, sizeof(s->regs));
     s->pending_intr_sts = 0;
+    s->buf_addr_consumed = false;
     i2c_end_transfer(s->bus);
 }
 
