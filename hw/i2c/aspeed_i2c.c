@@ -308,10 +308,10 @@ static int aspeed_i2c_bus_send(AspeedI2CBus *bus)
                                                 TX_COUNT) + 1;
 
     if (SHARED_ARRAY_FIELD_EX32(bus->regs, reg_cmd, TX_BUFF_EN)) {
-        for (i = 0; i < pool_tx_count; i++) {
+        for (i = 1; i < pool_tx_count; i++) {
             uint8_t *pool_base = aic->bus_pool_base(bus);
 
-            trace_aspeed_i2c_bus_send("BUF", i + 1, pool_tx_count,
+            trace_aspeed_i2c_bus_send("BUF", i, pool_tx_count - 1,
                                       pool_base[i]);
             ret = i2c_send(bus->bus, pool_base[i]);
             if (ret) {
