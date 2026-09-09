@@ -93,6 +93,10 @@ class Device(ABC):
         """Optional handshake; default no-op. Called once on QEMU realize."""
         return None
 
+    def reset(self) -> None:
+        """Reset internal device state upon connection open or reconnect."""
+        return None
+
 
 def recv_exact(sock: socket.socket, want: int, label: str) -> bytes:
     """Read exactly `want` bytes or raise EOFError."""
@@ -187,6 +191,7 @@ def serve(listener: socket.socket, device: Device) -> None:
     while True:
         conn, _ = listener.accept()
         try:
+            device.reset()
             while handle_one_request(conn, device):
                 pass
         except (ConnectionResetError, BrokenPipeError):
@@ -300,13 +305,20 @@ def main(argv: list[str]) -> int:
     device = DEVICE_REGISTRY[name]()
 
     if connect_mode:
-        conn = connect_sock(path, device)
-        try:
-            serve_conn(conn, device)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            conn.close()
+        import time
+        while True:
+            try:
+                conn = connect_sock(path, device)
+                try:
+                    device.reset()
+                    serve_conn(conn, device)
+                finally:
+                    conn.close()
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                _trace(f"connection error: {e}")
+                time.sleep(0.5)
     else:
         listener = make_listener(path)
         try:

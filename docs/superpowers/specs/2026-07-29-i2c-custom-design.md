@@ -231,7 +231,7 @@ also does:
 ```
 qemu-system-aarch64 -M ast2600-evb \
   -chardev socket,id=ic0,path=/tmp/i2c-proxy.sock,server=on,wait=off \
-  -device i2c-custom,address=0x4d,chardev=ic0,bus=aspeed.i2c.bus8 \
+  -device i2c-custom,address=0x4d,chardev=ic0,bus=aspeed.i2c.bus.8 \
   -serial mon:stdio -nographic
 ```
 

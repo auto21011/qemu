@@ -27,12 +27,16 @@
 #include "qemu/timer.h"
 #include "trace.h"
 
-/* Total per-read timeout: ~1s. */
-#define I2C_CUSTOM_RX_TIMEOUT_US  1000000
-/* Per-iteration sleep; small enough to keep the iothread responsive. */
-#define I2C_CUSTOM_RX_POLL_US        1000
+/* Total per-read timeout: 100ms (avoid stalling vCPU / holding BQL). */
+#define I2C_CUSTOM_RX_TIMEOUT_US  100000
+/* Per-iteration sleep. */
+#define I2C_CUSTOM_RX_POLL_US        200
 
-/* ---- wire protocol ---- */
+/* ---- wire protocol & return codes ---- */
+
+#define I2C_CUSTOM_REQ_OK        0
+#define I2C_CUSTOM_REQ_NAK      -1
+#define I2C_CUSTOM_REQ_ERR      -2
 
 /*
  * Request, QEMU -> proxy:
@@ -95,13 +99,6 @@ static void i2c_custom_chr_event(void *opaque, QEMUChrEvent event)
  * Synchronous read of exactly `want` bytes from the chardev frontend,
  * polling with a short sleep up to I2C_CUSTOM_RX_TIMEOUT_US in total.
  * Returns true on success (all bytes read), false on timeout or EOF.
- *
- * qemu_chr_fe_read_all() can return a short count or -1 (EAGAIN), so we
- * loop until we either have all the bytes, see EOF (rc == 0), or exceed
- * the timeout budget. We yield the thread with g_usleep to keep iothread
- * responsiveness, mirroring the pattern used in hw/ipmi/ipmi_bmc_extern.c
- * (which uses a QEMUTimer for retries; we use a tight loop because each
- * i2c transaction is short and synchronous from the vCPU thread).
  */
 static bool i2c_custom_read_all(I2CCustomState *s, uint8_t *buf, size_t want)
 {
@@ -132,30 +129,36 @@ static bool i2c_custom_read_all(I2CCustomState *s, uint8_t *buf, size_t want)
  * Issue a request to the backend and collect the reply.
  *
  * On success:
- *   - if @rx_want > 0, the reply payload (exactly @rx_want bytes) is stored
- *     into @rx_out.
- *   - returns 0.
+ *   - stores actual received payload bytes (up to @rx_want) into @rx_out.
+ *   - if @rx_actual != NULL, sets *@rx_actual to the actual received count.
+ *   - returns I2C_CUSTOM_REQ_OK (0).
  *
- * On backend-side NAK (rx_len == 0xffff in the reply) or any I/O error or
- * timeout, returns -1 and sets s->drained = true on EOF/timeout. No partial
- * rx data is left in @rx_out on failure.
+ * On backend-side NAK (rx_len == 0xffff in the reply):
+ *   - returns I2C_CUSTOM_REQ_NAK (-1). Does NOT set s->drained.
+ *
+ * On I/O error or timeout:
+ *   - sets s->drained = true and returns I2C_CUSTOM_REQ_ERR (-2).
  */
 static int i2c_custom_request(I2CCustomState *s, uint8_t opcode,
                               const uint8_t *tx, uint8_t tx_len,
                               uint8_t rx_want, uint8_t address,
-                              uint8_t *rx_out)
+                              uint8_t *rx_out, int *rx_actual)
 {
     I2CCustomReq hdr;
-    uint8_t rlen_lo, rlen_hi;
+    uint8_t rlen_buf[2];
     uint16_t rlen;
 
+    if (rx_actual) {
+        *rx_actual = 0;
+    }
+
     if (s->drained) {
-        return -1;
+        return I2C_CUSTOM_REQ_ERR;
     }
 
     /* Clamp at compile-time-checked limits (callers must already obey). */
     if (tx_len > I2C_CUSTOM_MAX_XFER || rx_want > I2C_CUSTOM_MAX_XFER) {
-        return -1;
+        return I2C_CUSTOM_REQ_ERR;
     }
 
     hdr.opcode = opcode;
@@ -167,11 +170,6 @@ static int i2c_custom_request(I2CCustomState *s, uint8_t opcode,
 
     /* Write header + tx payload in a single write where possible. */
     if (tx_len > 0) {
-        /*
-         * Build a tiny contiguous buffer: 4 bytes header + tx_len payload.
-         * Avoids two write() syscalls and any reordering concerns with the
-         * Python side (which reads 4-byte header then exactly tx_len bytes).
-         */
         uint8_t out[4 + I2C_CUSTOM_MAX_XFER];
         out[0] = hdr.opcode;
         out[1] = hdr.tx_len;
@@ -181,49 +179,57 @@ static int i2c_custom_request(I2CCustomState *s, uint8_t opcode,
         if (qemu_chr_fe_write_all(&s->chr, out, 4 + tx_len) !=
             4 + tx_len) {
             s->drained = true;
-            return -1;
+            return I2C_CUSTOM_REQ_ERR;
         }
     } else {
         if (qemu_chr_fe_write_all(&s->chr, (uint8_t *)&hdr, 4) != 4) {
             s->drained = true;
-            return -1;
+            return I2C_CUSTOM_REQ_ERR;
         }
     }
 
     /* Read 2-byte reply length (big-endian). */
-    if (!i2c_custom_read_all(s, &rlen_hi, 1) ||
-        !i2c_custom_read_all(s, &rlen_lo, 1)) {
+    if (!i2c_custom_read_all(s, rlen_buf, 2)) {
         s->drained = true;
-        return -1;
+        return I2C_CUSTOM_REQ_ERR;
     }
-    rlen = (uint16_t)((rlen_hi << 8) | rlen_lo);
+    rlen = (uint16_t)((rlen_buf[0] << 8) | rlen_buf[1]);
     if (rlen == 0xffff) {
         /* Backend explicitly NAKed this transaction. */
-        return -1;
+        return I2C_CUSTOM_REQ_NAK;
     }
 
-    /* Drain any reply bytes we weren't prepared for (defensive). */
+    /* Drain any excess reply bytes safely without stack overflow. */
     if (rlen > rx_want) {
         uint8_t skip[I2C_CUSTOM_MAX_XFER];
-        if (!i2c_custom_read_all(s, skip, rlen - rx_want)) {
-            s->drained = true;
-            return -1;
+        size_t to_skip = rlen - rx_want;
+        while (to_skip > 0) {
+            size_t chunk = MIN(to_skip, sizeof(skip));
+            if (!i2c_custom_read_all(s, skip, chunk)) {
+                s->drained = true;
+                return I2C_CUSTOM_REQ_ERR;
+            }
+            to_skip -= chunk;
         }
         rlen = rx_want;
     }
 
     if (rx_want > 0) {
-        if (!i2c_custom_read_all(s, rx_out, rlen)) {
-            s->drained = true;
-            return -1;
+        if (rlen > 0) {
+            if (!i2c_custom_read_all(s, rx_out, rlen)) {
+                s->drained = true;
+                return I2C_CUSTOM_REQ_ERR;
+            }
         }
-        /* Pad remaining wanted bytes with 0xff (defensive; Python should
-         * already send rx_want bytes for RECV ops). */
+        /* Pad remaining wanted bytes with 0xff. */
         if (rlen < rx_want) {
             memset(rx_out + rlen, 0xff, rx_want - rlen);
         }
+        if (rx_actual) {
+            *rx_actual = rlen;
+        }
     }
-    return 0;
+    return I2C_CUSTOM_REQ_OK;
 }
 
 /* ---- i2c slave vtable ---- */
@@ -234,6 +240,9 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
 
     switch (event) {
     case I2C_START_SEND:
+        if (s->drained) {
+            return -1;
+        }
         s->in_send_txn = true;
         s->in_recv_txn = false;
         s->tx_len = 0;
@@ -244,6 +253,13 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
         return -1;
 
     case I2C_START_RECV: {
+        int actual_len = 0;
+        int rc;
+
+        if (s->drained) {
+            return -1;
+        }
+
         /*
          * If this is a repeated START (no intervening I2C_FINISH), any
          * bytes accumulated during the preceding write phase must be
@@ -251,16 +267,19 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
          * pointer before we start reading.
          */
         if (s->in_send_txn && s->tx_len > 0) {
-            i2c_custom_request(s, I2C_CUSTOM_OP_SEND,
-                               s->tx_buf, s->tx_len,
-                               0, i2c->address, NULL);
+            rc = i2c_custom_request(s, I2C_CUSTOM_OP_SEND,
+                                    s->tx_buf, s->tx_len,
+                                    0, i2c->address, NULL, NULL);
+            if (rc != I2C_CUSTOM_REQ_OK) {
+                s->in_send_txn = false;
+                return -1;
+            }
         }
         /*
          * Pre-fetch the entire master-read into rx_buf so subsequent
          * i2c_custom_recv() calls return bytes synchronously without
          * blocking each call separately.
          */
-        int rc;
         s->in_recv_txn = true;
         s->in_send_txn = false;
         s->tx_len = 0;
@@ -269,13 +288,12 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
         rc = i2c_custom_request(s, I2C_CUSTOM_OP_RECV,
                                 NULL, 0,
                                 I2C_CUSTOM_MAX_XFER, i2c->address,
-                                s->rx_buf);
-        if (rc < 0) {
-            /* Drained / NAK: rx_buf stays zero-filled; recv() returns 0xff. */
-            s->drained = true;
-            break;
+                                s->rx_buf, &actual_len);
+        if (rc != I2C_CUSTOM_REQ_OK) {
+            s->in_recv_txn = false;
+            return -1;
         }
-        s->rx_len = I2C_CUSTOM_MAX_XFER;
+        s->rx_len = actual_len;
         break;
     }
 
@@ -288,7 +306,7 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
             trace_i2c_custom_send(s->tx_len, s->tx_buf[0]);
             i2c_custom_request(s, I2C_CUSTOM_OP_SEND,
                                s->tx_buf, s->tx_len,
-                               0, i2c->address, NULL);
+                               0, i2c->address, NULL, NULL);
         }
         s->in_send_txn = false;
         s->in_recv_txn = false;
@@ -296,7 +314,10 @@ static int i2c_custom_event(I2CSlave *i2c, enum i2c_event event)
         break;
 
     case I2C_NACK:
-        /* Master NAKed a receive byte; nothing to do here. */
+        /* Master NAKed a receive byte; end transaction. */
+        s->in_send_txn = false;
+        s->in_recv_txn = false;
+        s->tx_len = 0;
         break;
     }
 
@@ -307,8 +328,7 @@ static int i2c_custom_send(I2CSlave *i2c, uint8_t data)
 {
     I2CCustomState *s = I2C_CUSTOM(i2c);
 
-    if (!s->in_send_txn) {
-        /* Defensive: stray send outside a START_SEND..FINISH; NAK. */
+    if (s->drained || !s->in_send_txn) {
         return -1;
     }
     if (s->tx_len >= I2C_CUSTOM_MAX_XFER) {
@@ -335,6 +355,13 @@ static uint8_t i2c_custom_recv(I2CSlave *i2c)
 
 /* ---- realize / reset / vmstate / class ---- */
 
+static void i2c_custom_instance_init(Object *obj)
+{
+    I2CCustomState *s = I2C_CUSTOM(obj);
+
+    s->drained = true;
+}
+
 static void i2c_custom_realize(DeviceState *dev, Error **errp)
 {
     I2CCustomState *s = I2C_CUSTOM(dev);
@@ -349,13 +376,13 @@ static void i2c_custom_realize(DeviceState *dev, Error **errp)
                             NULL, s, NULL, true);
 
     /*
-     * Probe the backend with a PING so_chr_event() has had a chance to set
-     * s->drained=false. If the peer is not yet connected (e.g. wait=off and
-     * the python proxy hasn't started), this will time out and we'll just
-     * operate in drained mode until the connection appears.
+     * Probe the backend with a PING. If already connected, drained will
+     * clear to false; otherwise we stay in drained mode until CHR_EVENT_OPENED.
      */
-    i2c_custom_request(s, I2C_CUSTOM_OP_PING, NULL, 0, 0, s->i2c.address,
-                       NULL);
+    if (i2c_custom_request(s, I2C_CUSTOM_OP_PING, NULL, 0, 0, s->i2c.address,
+                           NULL, NULL) == I2C_CUSTOM_REQ_OK) {
+        s->drained = false;
+    }
 }
 
 static void i2c_custom_reset(DeviceState *dev)
@@ -375,6 +402,7 @@ static const VMStateDescription i2c_custom_vmstate = {
     .version_id = 1,
     .minimum_version_id = 1,
     .fields = (const VMStateField[]) {
+        VMSTATE_I2C_SLAVE(i2c, I2CCustomState),
         VMSTATE_UINT8_ARRAY(tx_buf, I2CCustomState, I2C_CUSTOM_MAX_XFER),
         VMSTATE_INT32(tx_len, I2CCustomState),
         VMSTATE_UINT8_ARRAY(rx_buf, I2CCustomState, I2C_CUSTOM_MAX_XFER),
@@ -414,6 +442,7 @@ static void i2c_custom_register_types(void)
         .name = TYPE_I2C_CUSTOM,
         .parent = TYPE_I2C_SLAVE,
         .instance_size = sizeof(I2CCustomState),
+        .instance_init = i2c_custom_instance_init,
         .class_init = i2c_custom_class_init,
     };
 
