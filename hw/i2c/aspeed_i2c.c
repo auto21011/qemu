@@ -379,6 +379,8 @@ static void aspeed_i2c_bus_recv(AspeedI2CBus *bus)
 
         for (i = 0; i < pool_rx_count; i++) {
             pool_base[i] = i2c_recv(bus->bus);
+            SHARED_ARRAY_FIELD_DP32(bus->regs, reg_byte_buf, RX_BUF,
+                                    pool_base[i]);
             trace_aspeed_i2c_bus_recv("BUF", i + 1, pool_rx_count,
                                       pool_base[i]);
         }
@@ -397,6 +399,7 @@ static void aspeed_i2c_bus_recv(AspeedI2CBus *bus)
             MemTxResult result;
 
             data = i2c_recv(bus->bus);
+            SHARED_ARRAY_FIELD_DP32(bus->regs, reg_byte_buf, RX_BUF, data);
             trace_aspeed_i2c_bus_recv("DMA", bus->regs[reg_dma_len],
                                       bus->regs[reg_dma_len], data);
 
